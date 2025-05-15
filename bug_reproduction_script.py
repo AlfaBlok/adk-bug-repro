@@ -80,7 +80,7 @@ def run_cell2():
 def run_cell3():
     # print("--- Running Cell 3: Stream Full JSON Events from /run_sse ---")
     # print(f"Using: Agent='{global_agent_name}', User='{global_user_id}', Session='{global_session_id}'")
-    query_text_sse = "weather in new york" # Preset query
+    query_text_sse = "slow weather in new york" # Preset query
     print(f"'{query_text_sse}'")
     
     url_sse = "http://localhost:8000/run_sse"
