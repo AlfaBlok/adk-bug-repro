@@ -1,88 +1,112 @@
-# ADK Streaming and Tool Behavior Test Script
+# Testing Custom Client Consumption of ADK Streaming
 
-This project contains a Python script (`bug_reproduction_script.py`) designed to test and observe the behavior of Google's Agent Development Kit (ADK), specifically focusing on:
+**Objective**: To test if a custom Python client can effectively connect to a Google ADK `api_server`, consume its `/run_sse` streaming endpoint, and correctly process different event types, including partial text updates and responses from tools that may introduce delays.
 
-*   Session management.
-*   Streaming responses from an agent (`/run_sse` endpoint).
-*   How agents handle tools, including tools with artificial delays (synchronous `time.sleep()`).
-*   Parsing and displaying streamed text from the agent.
+**Key Questions Explored**:
+*   Can a client connect to `/run_sse` and parse Server-Sent Events (SSE)?
+*   How can `"partial": true` events be handled to create a progressive, non-duplicative text display?
+*   What is the observed behavior when an agent tool introduces a synchronous delay (e.g., `time.sleep()`)?
+*   Is it feasible to build responsive custom front-ends for ADK agents without relying on proprietary ADK front-end components?
 
-The script interacts with a sample ADK agent defined in the `multi_tool_agent/` directory.
+This project uses `bug_reproduction_script.py` to interact with the `multi_tool_agent/` and `streamlit_app.py` as a simple web UI.
 
-## Prerequisites
+## Setup
 
-1.  **Python Environment**: Ensure you have Python installed.
-2.  **ADK Installed**: The `google-adk` library and its dependencies must be installed in your Python environment. You can typically install it via pip:
+1.  **Install Dependencies**:
     ```bash
-    pip install google-adk
+    pip install -r requirements.txt
     ```
-3.  **Requests Library**: The script uses the `requests` library.
-    ```bash
-    pip install requests
-    ```
-4.  **ADK Agent**: The sample agent code is located in the `multi_tool_agent` directory. No specific modifications are needed beyond what's in the repository for the script to run, but its behavior (especially tool definitions) is what's being tested.
-
-## Running the Test Script
-
-1.  **Start the ADK API Server**:
-    Open a terminal, navigate to the root directory of this project (`adk-bug-repro`), and start the ADK server:
+2.  **Run ADK Server**: In the project root, start the ADK agent's API server. This typically serves the `multi_tool_agent/`.
     ```bash
     adk api_server
     ```
-    You should see output indicating the server has started, typically running on `http://0.0.0.0:8000`.
-    **Keep this server running in its terminal window.**
+    (Ensure the `multi_tool_agent` is the one being served, or adjust agent path as needed).
+3.  **Run Test Script or Streamlit App**:
+    *   For the command-line script:
+        ```bash
+        python bug_reproduction_script.py
+        ```
+    *   For the Streamlit web application:
+        ```bash
+        streamlit run streamlit_app.py
+        ```
 
-2.  **Run the Python Test Script**:
-    Open a *new* terminal window, navigate to the root directory of this project, and run:
-    ```bash
-    python bug_reproduction_script.py
-    ```
+## Test Script (`bug_reproduction_script.py`)
 
-## Script Operations
+The script first automatically creates/validates an ADK session and then presents a menu for the following operations:
 
-Upon starting, the script will first attempt to initialize or validate a session with the ADK agent (equivalent to running Option 1). You will be prompted for Agent Name, User ID, and Session ID (defaults are provided).
+1.  **Session Init**: (Automatic on start) Ensures an active session with the ADK server.
+2.  **/run Query (Non-Streaming)**:
+    *   Sends a non-streaming query to the `/run` endpoint (preset: "weather in new york").
+    *   Prints the full, single JSON response from the agent.
+3.  **Full SSE Stream from /run_sse**:
+    *   Sends a streaming query to `/run_sse` (preset: "weather in new york").
+    *   Prints each raw JSON event received from the server. This is useful for understanding the structure of ADK's SSE messages.
+    *   **Sample Event Sequence (Illustrative for Cell 3 output):**
+        ```json
+        data: {"id": 1, "event": "speak", "data": {"text": "I can help with that. ", "partial": true, "utterance_id": "utterance_1"}}
 
-After initialization, an interactive menu will appear with the following options:
+        data: {"id": 2, "event": "speak", "data": {"text": "I can help with that. I am about to retrieve the weather information for New York.", "partial": true, "utterance_id": "utterance_1"}}
 
-1.  **Create/Re-initialize Session (Cell 1)**:
-    *   Prompts for Agent Name, User ID, and Session ID.
-    *   Attempts to create a new session with the ADK server using these details.
-    *   If a session with the given ID already exists, it will confirm this and use the existing session details for subsequent operations in the script.
-    *   Updates the script's global session parameters upon successful creation or validation.
+        data: {"id": 3, "event": "tool_code", "data": {"tool_name": "get_weather", "tool_input": "{\"location\": \"New York\"}", "utterance_id": "utterance_1"}}
 
-2.  **Send Query to /run (Non-streaming) (Cell 2)**:
-    *   Uses the preset query: `"weather in new york"`.
-    *   Sends this query to the ADK agent's `/run` endpoint.
-    *   Receives the complete JSON response from the agent at once (non-streaming).
-    *   Prints the full, pretty-printed JSON response.
+        # ... (ADK sends an ack for tool_code if client sends one) ...
 
-3.  **Stream Full JSON Events from /run_sse (Cell 3)**:
-    *   Uses the preset query: `"weather in new york"`.
-    *   Sends this query to the ADK agent's `/run_sse` endpoint with streaming enabled.
-    *   Prints the **full JSON structure of each event** as it is received from the server.
-    *   Useful for inspecting the raw event data, including `partial` flags, `functionCall`, `functionResponse`, etc.
+        data: {"id": 4, "event": "tool_result", "data": {"tool_name": "get_weather", "tool_output": "{\"weather\": \"Sunny, 75F\"}", "utterance_id": "utterance_1"}}
 
-4.  **Stream Text Parts from /run_sse (showing build-up) (Cell 4)**:
-    *   Uses the preset query: `"weather in new york"`.
-    *   Sends this query to the `/run_sse` endpoint with streaming enabled.
-    *   Parses the events to extract and print **only the textual content** from the agent's responses.
-    *   Attempts to display the text as it builds up, showing intermediate partial text chunks and then the final complete utterance from the agent.
-    *   Newlines are managed to separate distinct utterances.
+        data: {"id": 5, "event": "speak", "data": {"text": "The weather in New York is Sunny, 75F.", "partial": false, "utterance_id": "utterance_1"}}
 
-5.  **Stream Text Parts using slow_get_weather (Cell 5)**:
-    *   Uses the preset query: `"get slow weather for new york"` (designed to trigger the `slow_get_weather` tool in the agent, which has an artificial 5-second delay).
-    *   Otherwise, behaves identically to Option 4 in how it processes and displays the streamed text parts.
-    *   This option is specifically for testing agent and tool behavior when a tool introduces a synchronous delay.
+        data: {"id": 6, "event": "end", "data": {}}
+        ```
+4.  **Streamed Text (Fast Tool)**:
+    *   Queries `/run_sse` (preset: "weather in new york") and processes events to display only the textual parts of the agent's response.
+    *   Demonstrates handling of partial updates for a standard (fast) tool.
+5.  **Streamed Text (Slow Tool)**:
+    *   Similar to Option 4, but uses a query ("get slow weather for new york") designed to trigger the `slow_get_weather` tool, which includes a 5-second `time.sleep()`.
+    *   Tests client-side handling of streaming when tool execution is delayed.
 
-**exit**: Exits the script.
+**Streaming Logic for Text (Options 4 & 5 and Streamlit App):**
+The core strategy to display streamed text without duplication and show its build-up is as follows:
+*   **Track Current Utterance**: An `utterance_id` is present in most relevant events (`speak`, `tool_code`, `tool_result`). Text accumulation is typically scoped to a single `utterance_id`.
+*   **Handle Partial `speak` Events**:
+    *   A variable (e.g., `current_utterance_text`) stores the text accumulated for the current `utterance_id`.
+    *   When a `speak` event with `"partial": true` arrives:
+        *   The new text (`event.data.text`) is often cumulative. The script calculates the "delta" (the part of the text not yet seen) by comparing the incoming text with `current_utterance_text`.
+        *   This delta is appended to `current_utterance_text`.
+        *   The display is updated (e.g., printing `current_utterance_text` with a carriage return `\r` and `end=''` in the script, or updating a Streamlit element).
+    *   A flag (e.g., `partial_received_for_utterance`) is set to true.
+*   **Handle Final `speak` Events**:
+    *   When a `speak` event with `"partial": false` (or `partial` missing) arrives:
+        *   If `partial_received_for_utterance` is `false` (meaning no partials came for this specific utterance before this final event), the full text from this event is printed directly.
+        *   If `partial_received_for_utterance` is `true`, the script typically relies on the accumulated `current_utterance_text`. However, it's good practice to check if the final event's text differs from the accumulated one and update if necessary (ADK might send a correction).
+        *   The full line is printed, followed by a newline.
+    *   The `current_utterance_text` and `partial_received_for_utterance` are reset for the *next* utterance.
+*   **Tool Events**: `tool_code` and `tool_result` events are printed informatively when they arrive.
+*   **End Event**: Signals the completion of the agent's turn.
 
-## Purpose of the Agent (`multi_tool_agent/agent.py`)
+This logic aims to show text building up progressively (like someone typing) and then finalize it, while also interspersing tool activity messages.
 
-The agent is configured with a few tools:
-*   `get_weather`: A tool to get the weather (typically fast).
-*   `slow_get_weather`: A tool to get the weather with an intentional 5-second `time.sleep()` delay, used to test how the ADK runtime handles synchronous blocking calls within tools during streaming.
-*   `get_current_time`: A tool to get the current time in a city.
+## Agent (`multi_tool_agent/agent.py`)
 
-The agent's instructions guide it on when and how to use these tools, including informing the user before calling a potentially slow tool.
+The test agent includes:
+*   `get_weather`: A standard tool that quickly returns mock weather data.
+*   `slow_get_weather`: A tool that introduces a `time.sleep(5)` before returning mock weather data, simulating a slow-running operation.
+*   `get_current_time`: Another standard tool.
 
-This setup allows for focused testing of the ADK's behavior under different conditions, particularly with respect to streaming and tool execution latency. 
+## Streamlit App (`streamlit_app.py`)
+
+Provides a simple web interface to:
+*   Connect to the ADK server (manages session automatically).
+*   Send questions to the agent.
+*   Display the agent's streamed response in a chat-like format, using the same text streaming logic described above.
+*   Show raw JSON events in an expandable section for debugging.
+
+## Conclusions from Testing
+
+The tests performed using `bug_reproduction_script.py` and `streamlit_app.py` indicate:
+
+*   **Custom Client Viability**: Independent Python clients (both script-based and web-based via Streamlit) can successfully connect to the ADK `api_server`, parse the `/run_sse` SSE stream, and process all documented event types.
+*   **Effective Partial Update Handling**: The described streaming logic effectively handles ADK's `partial:true` events, allowing for a responsive, progressive text display that mimics natural conversation flow without duplicating content.
+*   **Impact of Synchronous Tool Delays**: Synchronous delays in tools (e.g., `time.sleep()`) can cause the agent to pause its output until the tool completes. The `/run_sse` stream remains open, and events resume after the delay. This underscores that while the ADK itself is asynchronous, a synchronously blocking tool will make the *overall response time for that part of the interaction* dependent on the tool's execution time. For highly responsive UIs with long-running tools, the tools themselves should be designed to be non-blocking or report progress if possible (though ADK's current tool protocol is request/response).
+
+These findings alleviate initial concerns that ADK's streaming output might be an opaque "black box" or exclusively usable by a proprietary ADK front-end. Custom front-ends capable of rich, interactive experiences are demonstrably feasible. 

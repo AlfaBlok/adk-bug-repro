@@ -2,3 +2,5 @@ uvicorn[standard]
 sqlalchemy
 fastapi
 google-adk
+requests
+streamlit
